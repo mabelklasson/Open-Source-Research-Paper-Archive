@@ -12,8 +12,12 @@
 (define-constant ERR_INSUFFICIENT_REVIEWS (err u411))
 (define-constant ERR_NO_PENDING_REWARDS (err u412))
 (define-constant ERR_INSUFFICIENT_REWARD_POOL (err u413))
+(define-constant ERR_INVALID_INPUT (err u414))
 
 (define-constant SUBMISSION_FEE u1000000)
+(define-constant BRONZE_THRESHOLD u200)
+(define-constant SILVER_THRESHOLD u500)
+(define-constant GOLD_THRESHOLD u1000)
 (define-constant PUBLICATION_FEE u5000000)
 (define-constant BASE_REVIEW_REWARD u200000)
 (define-constant QUALITY_BONUS_REWARD u100000)
@@ -71,6 +75,8 @@
 (define-map paper-reviews uint (list 50 {reviewer: principal, score: uint, comment: (string-ascii 500)}))
 (define-map review-rewards-pending principal uint)
 (define-map paper-review-count uint uint)
+(define-map author-tiers principal uint)
+(define-map tier-history {author: principal, timestamp: uint} {tier: uint, reputation: uint})
 
 (define-public (register-author (name (string-ascii 100)) (institution (string-ascii 200)) (email (string-ascii 100)))
     (let
@@ -525,4 +531,73 @@
 
 (define-read-only (get-paper-review-count (paper-id uint))
     (default-to u0 (map-get? paper-review-count paper-id))
+)
+
+(define-read-only (get-author-tier (author principal))
+    (let
+        (
+            (current-reputation (get reputation-score (default-to {name: "", institution: "", email: "", papers-count: u0, reputation-score: u0, joined-at: u0} (map-get? authors author))))
+        )
+        (if (>= current-reputation GOLD_THRESHOLD)
+            u3
+            (if (>= current-reputation SILVER_THRESHOLD)
+                u2
+                (if (>= current-reputation BRONZE_THRESHOLD)
+                    u1
+                    u0
+                )
+            )
+        )
+    )
+)
+
+(define-read-only (get-tier-name (tier uint))
+    (if (is-eq tier u3)
+        "Gold"
+        (if (is-eq tier u2)
+            "Silver"
+            (if (is-eq tier u1)
+                "Bronze"
+                "Standard"
+            )
+        )
+    )
+)
+
+(define-read-only (get-tier-requirements)
+    (ok {bronze: BRONZE_THRESHOLD, silver: SILVER_THRESHOLD, gold: GOLD_THRESHOLD})
+)
+
+(define-read-only (has-tier (author principal) (tier uint))
+    (let
+        (
+            (current-tier (get-author-tier author))
+        )
+        (>= current-tier tier)
+    )
+)
+
+(define-read-only (get-author-tier-info (author principal))
+    (let
+        (
+            (tier (get-author-tier author))
+            (tier-name (get-tier-name tier))
+        )
+        (ok {tier: tier, tier-name: tier-name})
+    )
+)
+
+(define-public (update-author-tier (author principal) (new-tier uint))
+    (let
+        (
+            (author-info (map-get? authors author))
+            (current-reputation (get reputation-score (unwrap! author-info ERR_INVALID_AUTHOR)))
+        )
+        (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_NOT_AUTHORIZED)
+        (asserts! (is-some author-info) ERR_INVALID_AUTHOR)
+        (asserts! (<= new-tier u3) ERR_INVALID_INPUT)
+        (map-set author-tiers author new-tier)
+        (map-set tier-history {author: author, timestamp: stacks-block-height} {tier: new-tier, reputation: current-reputation})
+        (ok true)
+    )
 )
